@@ -76,6 +76,8 @@ typedef struct
     HANDLE Legacy_WriteStdIn;
     HANDLE Legacy_ReadStdOut;
     HANDLE Legacy_ReadStdError;
+    
+    HANDLE SerialPort;
 
     int EnableFastPipe;
     HANDLE FastPipeReady;

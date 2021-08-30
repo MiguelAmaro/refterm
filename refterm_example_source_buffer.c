@@ -11,7 +11,7 @@ static source_buffer AllocateSourceBuffer(size_t DataSize)
     DataSize = (DataSize + Info.dwAllocationGranularity - 1) & ~(Info.dwAllocationGranularity - 1);
     HANDLE Section = CreateFileMapping (INVALID_HANDLE_VALUE, 0, PAGE_READWRITE, (DWORD)(DataSize >> 32), (DWORD)(DataSize & 0xffffffff), 0);
     
- #ifdef MEM_REPLACE_PLACEHOLDER
+#ifdef MEM_REPLACE_PLACEHOLDER
     void* Placeholder1 = VirtualAlloc2 (0, 0,
                                         2 * DataSize, MEM_RESERVE | MEM_RESERVE_PLACEHOLDER, PAGE_NOACCESS,
                                         0, 0);
@@ -130,7 +130,7 @@ static source_buffer_range GetNextWritableRange(source_buffer *Buffer, size_t Ma
     Result.AbsoluteP = Buffer->AbsoluteFilledSize;
     Result.Count = Buffer->DataSize;
     Result.Data = Buffer->Data + Buffer->RelativePoint;
-
+    
     if(Result.Count > MaxCount)
     {
         Result.Count = MaxCount;
@@ -174,7 +174,7 @@ static glyph_hash ComputeGlyphHash(size_t Count, char unsigned *At, char unsigne
       problem space.  It may be that non-AES hashing would be
       better.  Some careful analysis would be nice.
     */
-      
+    
     // TODO(casey): Does the result of a grapheme composition
     // depend on whether or not it was RTL or LTR?  Or are there
     // no fonts that ever get used in both directions, so it doesn't
@@ -240,4 +240,3 @@ static glyph_hash ComputeHashForTileIndex(glyph_hash Tile0Hash, uint32_t TileInd
     glyph_hash Result = {HashValue};
     return Result;
 }
-    
