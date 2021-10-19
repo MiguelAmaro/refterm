@@ -27,8 +27,6 @@ static void DeallocateTerminalBuffer(terminal_buffer *Buffer)
 static DWORD GetPipePendingDataCount(HANDLE Pipe)
 {
     DWORD Result = 0;
-    // NOTE(MIGUEL): not the right place for serial port. Need to find
-    //               the origin of this pipe HANDLE.
     
     PeekNamedPipe(Pipe, 0, 0, 0, &Result, 0);
     
@@ -306,8 +304,8 @@ static void ParseLines(example_terminal *Terminal, source_buffer_range Range, cu
     */
     
     __m128i Carriage = _mm_set1_epi8('\n');
-    __m128i Escape = _mm_set1_epi8('\x1b');
-    __m128i Complex = _mm_set1_epi8(0x80);
+    __m128i Escape   = _mm_set1_epi8('\x1b');
+    __m128i Complex  = _mm_set1_epi8(0x80);
     
     size_t SplitLineAtCount = 4096;
     size_t LastP = Range.AbsoluteP;
@@ -373,6 +371,8 @@ static void ParseLines(example_terminal *Terminal, source_buffer_range Range, cu
             LineFeed(Terminal, Range.AbsoluteP, Range.AbsoluteP, Cursor->Props);
         }
     }
+    
+    return;
 }
 
 static void ParseWithUniscribe(example_terminal *Terminal, source_buffer_range UTF8Range, cursor_state *Cursor)
@@ -671,7 +671,7 @@ typedef enum
     StreamType_SerialPort,
 }stream_type;
 
-static int UpdateTerminalBuffer(example_terminal *Terminal, stream_type StreamType, HANDLE FromStream)
+static int UpdateTerminalBuffer(example_terminal *Terminal, stream_type StreamType, HANDLE StreamHandle)
 {
     int Result = 0;
     
@@ -684,19 +684,19 @@ static int UpdateTerminalBuffer(example_terminal *Terminal, stream_type StreamTy
     {
         case StreamType_Pipe:
         {                                                            
-            if(FromStream != INVALID_HANDLE_VALUE)
+            if(StreamHandle != INVALID_HANDLE_VALUE)
             {
                 Result = 1;
                 
                 terminal_buffer *Term = &Terminal->ScreenBuffer;
                 
-                DWORD PendingCount = GetPipePendingDataCount(FromStream);
+                DWORD PendingCount = GetPipePendingDataCount(StreamHandle);
                 if(PendingCount)
                 {
                     source_buffer_range Dest = GetNextWritableRange(&Terminal->ScrollBackBuffer, PendingCount);
                     
                     DWORD ReadCount = 0;
-                    if(ReadFile(FromStream, Dest.Data, (DWORD)Dest.Count, &ReadCount, 0))
+                    if(ReadFile(StreamHandle, Dest.Data, (DWORD)Dest.Count, &ReadCount, 0))
                     {
                         Assert(ReadCount <= Dest.Count);
                         Dest.Count = ReadCount;
@@ -720,27 +720,35 @@ static int UpdateTerminalBuffer(example_terminal *Terminal, stream_type StreamTy
             
             // NOTE(MIGUEL): This is kind of dumb i should write a seprerate process thatll
             //               collect input from the micro controller and pipe it here. 
-            //               Thats how its meant to be used i believe. But something like my
+            //               Thats how its meant to be used. But something like my
             //               drone controller would integrate this in.
             
             // TODO(MIGUEL): Continue the madness get a continuos print of chars from the mcu 
             
-            if(FromStream != INVALID_HANDLE_VALUE)
+            if(StreamHandle != INVALID_HANDLE_VALUE)
             {
                 Result = 1;
                 
                 terminal_buffer *Term = &Terminal->ScreenBuffer;
                 
-                DWORD PendingCount = 1; //GetPipePendingDataCount(FromStream);
+                // NOTE(MIGUEL): Pending count sets a limit on the src_buffer_range
+                //               based on the the amount of data you expect to read.
+                //               In this case the amound of data expected is unknown.
+                //               It may be a countinuous stream of data or there can be
+                //               data of an unkown size sent periodically.
+                DWORD PendingCount = 10;
+                
                 if(PendingCount)
                 {
                     source_buffer_range Dest = GetNextWritableRange(&Terminal->ScrollBackBuffer, PendingCount);
                     
                     DWORD ReadCount = 0;
-                    if(ReadFile(FromStream, Dest.Data, (DWORD)Dest.Count, &ReadCount, 0))
+                    
+                    if(ReadFile(StreamHandle, Dest.Data, (DWORD)Dest.Count, &ReadCount, 0))
                     {
                         Assert(ReadCount <= Dest.Count);
                         Dest.Count = ReadCount;
+                        
                         CommitWrite(&Terminal->ScrollBackBuffer, Dest.Count);
                         ParseLines(Terminal, Dest, &Terminal->RunningCursor);
                     }
@@ -797,6 +805,8 @@ static void LayoutLines(example_terminal *Terminal)
         }
     }
     
+    
+    
     if(CursorJumped)
     {
         Cursor.At.X = 0;
@@ -844,25 +854,25 @@ static int ExecuteSubProcess(example_terminal *Terminal, char *ProcessName, char
     }
     
     PROCESS_INFORMATION ProcessInfo = {0};
+    
     STARTUPINFOA StartupInfo = {sizeof(StartupInfo)};
-    StartupInfo.dwFlags = STARTF_USESTDHANDLES;
+    StartupInfo.dwFlags      = STARTF_USESTDHANDLES;
     
     SECURITY_ATTRIBUTES Inherit = {sizeof(Inherit)};
-    Inherit.bInheritHandle = TRUE;
+    Inherit.bInheritHandle      = TRUE;
     
-    CreatePipe(&StartupInfo.hStdInput, &Terminal->Legacy_WriteStdIn, &Inherit, 0);
-    CreatePipe(&Terminal->Legacy_ReadStdOut, &StartupInfo.hStdOutput, &Inherit, 0);
-    CreatePipe(&Terminal->Legacy_ReadStdError, &StartupInfo.hStdError, &Inherit, 0);
+    CreatePipe(&StartupInfo.hStdInput        , &Terminal->Legacy_WriteStdIn, &Inherit, 0);
+    CreatePipe(&Terminal->Legacy_ReadStdOut  , &StartupInfo.hStdOutput     , &Inherit, 0);
+    CreatePipe(&Terminal->Legacy_ReadStdError, &StartupInfo.hStdError      , &Inherit, 0);
     
-    SetHandleInformation(Terminal->Legacy_WriteStdIn, HANDLE_FLAG_INHERIT, 0);
-    SetHandleInformation(Terminal->Legacy_ReadStdOut, HANDLE_FLAG_INHERIT, 0);
+    SetHandleInformation(Terminal->Legacy_WriteStdIn  , HANDLE_FLAG_INHERIT, 0);
+    SetHandleInformation(Terminal->Legacy_ReadStdOut  , HANDLE_FLAG_INHERIT, 0);
     SetHandleInformation(Terminal->Legacy_ReadStdError, HANDLE_FLAG_INHERIT, 0);
     
     int Result = 0;
     
     char *ProcessDir = ".\\";
-    if(CreateProcessA(
-                      ProcessName,
+    if(CreateProcessA(ProcessName,
                       ProcessCommandLine,
                       0,
                       0,
@@ -1008,7 +1018,7 @@ RefreshFont(example_terminal *Terminal)
 
 
 // NOTE(MIGUEL): should take params to decide a device
-int EstablishSerialPortConnection(example_terminal *Terminal)
+int EstablishSerialPortConnection(example_terminal *Terminal, uint8_t *PortNumber, size_t PortNumberSize)
 {
     // Created An IO Stream to talk with micro controller
     
@@ -1019,14 +1029,21 @@ int EstablishSerialPortConnection(example_terminal *Terminal)
     //               and their associeated guid. blah blah
     int Result = 0;
     
-    Terminal->SerialPort = CreateFile("\\\\.\\COM5",
+    
+    uint32_t PortAccessBaseSize = sizeof("\\\\.\\COM");
+    uint8_t  PortAccess[128] = "\\\\.\\COM";
+    
+    Assert((PortAccessBaseSize + PortNumberSize) < 128);
+    
+    memcpy((((uint8_t *)PortAccess) + PortAccessBaseSize) - 1, PortNumber, PortNumberSize);
+    
+    Terminal->SerialPort = CreateFile((const char *)PortAccess,
                                       GENERIC_READ | GENERIC_WRITE,
                                       0,
                                       NULL,
                                       OPEN_EXISTING,
                                       0,
                                       NULL);
-    
     
     if(Terminal->SerialPort != INVALID_HANDLE_VALUE)
     {
@@ -1037,7 +1054,7 @@ int EstablishSerialPortConnection(example_terminal *Terminal)
         
         DCB DeviceSerialParams       = { 0 }; // Initializing DCB structureco
         DeviceSerialParams.DCBlength = sizeof(DeviceSerialParams);
-        DeviceSerialParams.BaudRate  = 9600      ;
+        DeviceSerialParams.BaudRate  = 115200;  //9600      ;
         DeviceSerialParams.ByteSize  = 8         ;         
         DeviceSerialParams.StopBits  = ONESTOPBIT;
         DeviceSerialParams.Parity    = NOPARITY  ;
@@ -1061,6 +1078,9 @@ int EstablishSerialPortConnection(example_terminal *Terminal)
         { 
             Result = 0;
         }
+        
+        // NOTE(MIGUEL): This will hang if the comm devices parameters
+        //               are configured wrong.
         if(!WaitCommEvent(Terminal->SerialPort, &dwEventMask, 0))
         {
             Result = 0;
@@ -1074,8 +1094,9 @@ static void ExecuteCommandLine(example_terminal *Terminal)
 {
     // TODO(casey): All of this is complete garbage and should never ever be used.
     
-    Terminal->CommandLine[Terminal->CommandLineCount] = 0;
+    Terminal->CommandLine[Terminal->CommandLineCount] = 0; // just a deliminator
     uint32_t ParamStart = 0;
+    
     while(ParamStart < Terminal->CommandLineCount)
     {
         if(Terminal->CommandLine[ParamStart] == ' ') break;
@@ -1085,6 +1106,7 @@ static void ExecuteCommandLine(example_terminal *Terminal)
     char *A = Terminal->CommandLine;
     char *B = Terminal->CommandLine + ParamStart;
     *B = 0;
+    
     if(ParamStart < Terminal->CommandLineCount)
     {
         ++ParamStart;
@@ -1092,7 +1114,7 @@ static void ExecuteCommandLine(example_terminal *Terminal)
     }
     
     source_buffer_range ParamRange = {0};
-    ParamRange.Data = B;
+    ParamRange.Data  = B;
     ParamRange.Count = Terminal->CommandLineCount - ParamStart;
     
     // TODO(casey): Collapse all these options into a little array, so there's no
@@ -1171,13 +1193,35 @@ static void ExecuteCommandLine(example_terminal *Terminal)
     else if((StringsAreEqual(Terminal->CommandLine, "conn")) ||
             (StringsAreEqual(Terminal->CommandLine, "connect")))
     {
-        AppendOutput(Terminal, "connecting to MCU... \n", B);
+        AppendOutput(Terminal, "connecting to MCU... \n");
         
-        if(!EstablishSerialPortConnection(Terminal))
+        if(!EstablishSerialPortConnection(Terminal,
+                                          (uint8_t *)ParamRange.Data,
+                                          ParamRange.Count))
         {
             AppendOutput(Terminal,
-                         "ERROR: Unable to establish a connection %s\n",
-                         Terminal->CommandLine);
+                         "ERROR: "
+                         "Unable to establish a connection\n");
+            
+            uint32_t PortNumbers[16]  = { 0 };
+            uint32_t PortNumbersCount =  16;
+            uint32_t PortsFoundCount  =   0;
+            
+            if(GetCommPorts((PULONG)PortNumbers,
+                            PortNumbersCount,
+                            (PULONG)&PortsFoundCount) == ERROR_SUCCESS)
+            {
+                AppendOutput(Terminal,"Ports Found:\n");
+                
+                for(uint32_t PortIndex = 0; PortIndex < PortsFoundCount; PortIndex++)
+                {
+                    AppendOutput(Terminal,"COM %d \n", PortNumbers[PortIndex]);
+                }
+            }
+            else
+            {
+                AppendOutput(Terminal,"ERROR: ""GetCommPorts failed\n");
+            }
         }
     }
     else if(StringsAreEqual(Terminal->CommandLine, ""))
@@ -1199,8 +1243,9 @@ static void ExecuteCommandLine(example_terminal *Terminal)
             }
         }
     }
+    
+    return;
 }
-
 
 static int IsUTF8Extension(char A)
 {
@@ -1248,6 +1293,11 @@ static void ProcessMessages(example_terminal *Terminal)
             
             case WM_CHAR:
             {
+                // NOTE(MIGUEL): This is the character code of the window which
+                //               has the keyboard in focus. If this code path is
+                //               take then a WM_KEYDOWN message was translated by
+                //               the TranslateMessage() funciton.
+                
                 switch(Message.wParam)
                 {
                     case VK_BACK:
@@ -1267,7 +1317,7 @@ static void ProcessMessages(example_terminal *Terminal)
                     case VK_RETURN:
                     {
                         ExecuteCommandLine(Terminal);
-                        Terminal->CommandLineCount = 0;
+                        Terminal->CommandLineCount  = 0;
                         Terminal->ViewingLineOffset = 0;
                     } break;
                     
@@ -1321,13 +1371,13 @@ static DWORD WINAPI TerminalThread(LPVOID Param)
     Terminal->Window = (HWND)Param;
     Terminal->LineWrap = 1;
     Terminal->ChildProcess = INVALID_HANDLE_VALUE;
-    Terminal->Legacy_WriteStdIn = INVALID_HANDLE_VALUE;
-    Terminal->Legacy_ReadStdOut = INVALID_HANDLE_VALUE;
+    Terminal->Legacy_WriteStdIn   = INVALID_HANDLE_VALUE;
+    Terminal->Legacy_ReadStdOut   = INVALID_HANDLE_VALUE;
     Terminal->Legacy_ReadStdError = INVALID_HANDLE_VALUE;
-    Terminal->FastPipe = INVALID_HANDLE_VALUE;
-    Terminal->SerialPort = INVALID_HANDLE_VALUE;
+    Terminal->FastPipe            = INVALID_HANDLE_VALUE;
+    Terminal->SerialPort          = INVALID_HANDLE_VALUE;
     Terminal->DefaultForegroundColor = 0x00afafaf;
-    Terminal->DefaultBackgroundColor = 0x000c1c0c;
+    Terminal->DefaultBackgroundColor = 0x000c0c1c;
     Terminal->FastPipeReady = CreateEventW(0, TRUE, FALSE, 0);
     Terminal->FastPipeTrigger.hEvent = Terminal->FastPipeReady;
     Terminal->PipeSize = 16*1024*1024;
@@ -1342,15 +1392,15 @@ static DWORD WINAPI TerminalThread(LPVOID Param)
     // basically never happens, you don't see any bugs with it, but it
     // theoretically _could_ happen if the texture size isn't large enough
     // to fit one whole screen of glyphs.
-    Terminal->REFTERM_TEXTURE_WIDTH = 2048;
+    Terminal->REFTERM_TEXTURE_WIDTH  = 2048;
     Terminal->REFTERM_TEXTURE_HEIGHT = 2048;
     
     // TODO(casey): Auto-size this, somehow?  The TransferHeight effectively restricts the maximum size of the
     // font, so it may want to be "grown" based on the font size selected.
-    Terminal->TransferWidth = 1024;
+    Terminal->TransferWidth  = 1024;
     Terminal->TransferHeight = 512;
     
-    Terminal->REFTERM_MAX_WIDTH = 1024;
+    Terminal->REFTERM_MAX_WIDTH  = 1024;
     Terminal->REFTERM_MAX_HEIGHT = 1024;
     
     int DebugD3D11 = 0;
@@ -1359,8 +1409,14 @@ static DWORD WINAPI TerminalThread(LPVOID Param)
 #endif
     
     Terminal->Renderer = AcquireD3D11Renderer(Terminal->Window, DebugD3D11);
-    SetD3D11GlyphCacheDim(&Terminal->Renderer, Terminal->REFTERM_TEXTURE_WIDTH, Terminal->REFTERM_TEXTURE_HEIGHT);
-    SetD3D11GlyphTransferDim(&Terminal->Renderer, Terminal->TransferWidth, Terminal->TransferHeight);
+    
+    SetD3D11GlyphCacheDim   (&Terminal->Renderer,
+                             Terminal->REFTERM_TEXTURE_WIDTH,
+                             Terminal->REFTERM_TEXTURE_HEIGHT);
+    
+    SetD3D11GlyphTransferDim(&Terminal->Renderer,
+                             Terminal->TransferWidth,
+                             Terminal->TransferHeight);
     
     Terminal->GlyphGen = AllocateGlyphGenerator(Terminal->TransferWidth,
                                                 Terminal->TransferHeight,
@@ -1379,7 +1435,9 @@ static DWORD WINAPI TerminalThread(LPVOID Param)
     
     ShowWindow(Terminal->Window, SW_SHOWDEFAULT);
     
-    AppendOutput(Terminal, "\n"); // TODO(casey): Better line startup - this is here just to initialize the running cursor.
+    AppendOutput(Terminal, "\n"); 
+    // TODO(casey): Better line startup - this is here just to initialize the running cursor.
+    
     AppendOutput(Terminal, "Refterm v%u\n", REFTERM_VERSION);
     AppendOutput(Terminal,
                  "THIS IS \x1b[38;2;255;0;0m\x1b[5mNOT\x1b[0m A REAL \x1b[9mTERMINAL\x1b[0m.\r\n"
@@ -1391,9 +1449,9 @@ static DWORD WINAPI TerminalThread(LPVOID Param)
     AppendOutput(Terminal, OpeningMessage);
     AppendOutput(Terminal, "\n");
     
-    int BlinkMS = 500; // TODO(casey): Use this in blink determination
+    int BlinkMS     = 500; // TODO(casey): Use this in blink determination
     int MinTermSize = 512;
-    uint32_t Width = MinTermSize;
+    uint32_t Width  = MinTermSize;
     uint32_t Height = MinTermSize;
     
     LARGE_INTEGER Frequency, Time;
@@ -1417,8 +1475,16 @@ static DWORD WINAPI TerminalThread(LPVOID Param)
             DWORD HandleCount = 0;
             
             Handles[HandleCount++] = Terminal->FastPipeReady;
-            if(Terminal->Legacy_ReadStdOut != INVALID_HANDLE_VALUE) Handles[HandleCount++] = Terminal->Legacy_ReadStdOut;
-            if(Terminal->Legacy_ReadStdError != INVALID_HANDLE_VALUE) Handles[HandleCount++] = Terminal->Legacy_ReadStdError;
+            
+            if(Terminal->Legacy_ReadStdOut != INVALID_HANDLE_VALUE) 
+            {
+                Handles[HandleCount++] = Terminal->Legacy_ReadStdOut;
+            }
+            if(Terminal->Legacy_ReadStdError != INVALID_HANDLE_VALUE)
+            {
+                Handles[HandleCount++] = Terminal->Legacy_ReadStdError;
+            }
+            
             MsgWaitForMultipleObjects(HandleCount, Handles, FALSE, BlinkMS, QS_ALLINPUT);
         }
         
@@ -1452,9 +1518,9 @@ static DWORD WINAPI TerminalThread(LPVOID Param)
         do
         {
             int SerialIn = UpdateTerminalBuffer(Terminal, StreamType_SerialPort, Terminal->SerialPort);
-            int FastIn = UpdateTerminalBuffer(Terminal, StreamType_Pipe, Terminal->FastPipe);
-            int SlowIn = UpdateTerminalBuffer(Terminal, StreamType_Pipe,Terminal->Legacy_ReadStdOut);
-            int ErrIn  = UpdateTerminalBuffer(Terminal, StreamType_Pipe,Terminal->Legacy_ReadStdError);
+            int FastIn   = UpdateTerminalBuffer(Terminal, StreamType_Pipe, Terminal->FastPipe);
+            int SlowIn   = UpdateTerminalBuffer(Terminal, StreamType_Pipe,Terminal->Legacy_ReadStdOut);
+            int ErrIn    = UpdateTerminalBuffer(Terminal, StreamType_Pipe,Terminal->Legacy_ReadStdError);
             
             if(!SlowIn && (Terminal->Legacy_ReadStdOut != INVALID_HANDLE_VALUE))
             {

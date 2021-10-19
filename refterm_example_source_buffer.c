@@ -6,20 +6,41 @@ static source_buffer AllocateSourceBuffer(size_t DataSize)
     GetSystemInfo(&Info);
     Assert(IsPowerOfTwo(Info.dwAllocationGranularity));
     
-    // NOTE(casey): This has to be aligned to the allocation granularity otherwise the back-to-back buffer mapping might
-    // not work.
+    // NOTE(casey): This has to be aligned to the allocation granularity
+    //              otherwise the back-to-back buffer mapping might
+    //              not work.
+    
     DataSize = (DataSize + Info.dwAllocationGranularity - 1) & ~(Info.dwAllocationGranularity - 1);
-    HANDLE Section = CreateFileMapping (INVALID_HANDLE_VALUE, 0, PAGE_READWRITE, (DWORD)(DataSize >> 32), (DWORD)(DataSize & 0xffffffff), 0);
+    
+    HANDLE Section = CreateFileMapping (INVALID_HANDLE_VALUE, 0,
+                                        PAGE_READWRITE, (DWORD)(DataSize >> 32),
+                                        (DWORD)(DataSize & 0xffffffff), 0);
     
 #ifdef MEM_REPLACE_PLACEHOLDER
     void* Placeholder1 = VirtualAlloc2 (0, 0,
-                                        2 * DataSize, MEM_RESERVE | MEM_RESERVE_PLACEHOLDER, PAGE_NOACCESS,
+                                        2 * DataSize,
+                                        MEM_RESERVE | MEM_RESERVE_PLACEHOLDER,
+                                        PAGE_NOACCESS,
                                         0, 0);
+    
     VirtualFree (Placeholder1, DataSize, MEM_RELEASE | MEM_PRESERVE_PLACEHOLDER);
+    
     void *Placeholder2 = ((char *)Placeholder1 + DataSize);
     
-    void *View1 = MapViewOfFile3 (Section, 0, Placeholder1, 0, DataSize, MEM_REPLACE_PLACEHOLDER, PAGE_READWRITE, 0, 0);
-    void *View2 = MapViewOfFile3 (Section, 0, Placeholder2, 0, DataSize, MEM_REPLACE_PLACEHOLDER, PAGE_READWRITE, 0, 0);
+    void *View1 = MapViewOfFile3 (Section, 0,
+                                  Placeholder1, 0,
+                                  DataSize,
+                                  MEM_REPLACE_PLACEHOLDER,
+                                  PAGE_READWRITE,
+                                  0, 0);
+    
+    void *View2 = MapViewOfFile3 (Section, 0,
+                                  Placeholder2, 0,
+                                  DataSize,
+                                  MEM_REPLACE_PLACEHOLDER,
+                                  PAGE_READWRITE,
+                                  0, 0);
+    
     if(View1 && View2)
     {
         Result.Data = View1;
@@ -50,7 +71,9 @@ static source_buffer AllocateSourceBuffer(size_t DataSize)
         
         if(!Result.Data)
         {
-            MessageBoxW(0, L"Unable to allocate scrollback buffer with probing", L"Fatal error", MB_OK|MB_ICONSTOP);
+            MessageBoxW(0, L"Unable to allocate scrollback buffer with probing",
+                        L"Fatal error",
+                        MB_OK|MB_ICONSTOP);
         }
 #ifdef MEM_REPLACE_PLACEHOLDER
     }
@@ -128,8 +151,8 @@ static source_buffer_range GetNextWritableRange(source_buffer *Buffer, size_t Ma
     
     source_buffer_range Result = {0};
     Result.AbsoluteP = Buffer->AbsoluteFilledSize;
-    Result.Count = Buffer->DataSize;
-    Result.Data = Buffer->Data + Buffer->RelativePoint;
+    Result.Count     = Buffer->DataSize;
+    Result.Data      = Buffer->Data + Buffer->RelativePoint;
     
     if(Result.Count > MaxCount)
     {

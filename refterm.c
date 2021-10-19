@@ -51,7 +51,7 @@ DWORD RenderThreadID = 0;
 static LRESULT CALLBACK WindowProc(HWND Window, UINT Message, WPARAM WParam, LPARAM LParam)
 {
     LRESULT Result = 0;
-
+    
     switch (Message)
     {
         case WM_CLOSE:
@@ -65,13 +65,13 @@ static LRESULT CALLBACK WindowProc(HWND Window, UINT Message, WPARAM WParam, LPA
         {
             PostThreadMessage(RenderThreadID, Message, WParam, LParam);
         } break;
-
+        
         default:
         {
             Result = DefWindowProcW(Window, Message, WParam, LParam);
         } break;
     }
-
+    
     return Result;
 }
 
@@ -107,7 +107,7 @@ static HWND CreateOutputWindow()
         .hbrBackground = (HBRUSH)GetStockObject(BLACK_BRUSH),
         .lpszClassName = L"reftermclass",
     };
-
+    
     HWND Result = {0};
     if(RegisterClassExW(&WindowClass))
     {
@@ -116,24 +116,24 @@ static HWND CreateOutputWindow()
         // I don't normally program DirectX and have no idea, we're just going to
         // leave it here :)
         DWORD ExStyle = WS_EX_APPWINDOW | WS_EX_NOREDIRECTIONBITMAP;
-
+        
         Result = CreateWindowExW(ExStyle, WindowClass.lpszClassName, L"refterm", WS_OVERLAPPEDWINDOW,
                                  CW_USEDEFAULT, CW_USEDEFAULT, CW_USEDEFAULT, CW_USEDEFAULT,
                                  0, 0, WindowClass.hInstance, 0);
     }
-
+    
     return Result;
 }
 
 void WinMainCRTStartup()
 {
     PreventWindowsDPIScaling();
-
+    
     HWND Window = CreateOutputWindow();
     Assert(IsWindow(Window));
-
+    
     CreateThread(0, 0, TerminalThread, Window, 0, &RenderThreadID);
-
+    
     for(;;)
     {
         MSG Message;
@@ -162,7 +162,7 @@ void *memset(void *DestInit, int Source, size_t Size)
 {
     unsigned char *Dest = (unsigned char *)DestInit;
     while(Size--) *Dest++ = (unsigned char)Source;
-
+    
     return(DestInit);
 }
 
@@ -172,6 +172,6 @@ void *memcpy(void *DestInit, void const *SourceInit, size_t Size)
     unsigned char *Source = (unsigned char *)SourceInit;
     unsigned char *Dest = (unsigned char *)DestInit;
     while(Size--) *Dest++ = *Source++;
-
+    
     return(DestInit);
 }
